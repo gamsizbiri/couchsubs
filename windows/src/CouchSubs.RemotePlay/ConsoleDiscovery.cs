@@ -9,7 +9,7 @@ using CouchSubs.Core;
 
 namespace CouchSubs.RemotePlay;
 
-/// <summary>Yerel ağdaki PS5'leri bulur ve uyutulmuş olanı uyandırır.</summary>
+/// <summary>Yerel ağdaki PS4 ve PS5'leri bulur ve uyutulmuş olanı uyandırır.</summary>
 public static class ConsoleDiscovery
 {
     internal const string Broadcast = "255.255.255.255";
@@ -40,13 +40,13 @@ public static class ConsoleDiscovery
         return found.Count == 0 ? null : RunningGame.Create(found[0].RunningAppTitleId, found[0].RunningAppName);
     }
 
-    /// <summary>Kayıtlı PS5'i dinlenme modundan uyandırır.</summary>
+    /// <summary>Kayıtlı PS4/PS5'i dinlenme modundan uyandırır.</summary>
     public static void Wake(RegisteredConsole console)
     {
         var credential = console.WakeCredential ?? throw new InvalidOperationException("Registration key is not a wake credential");
         NativeMethods.EnsureInitialized();
-        var result = NativeMethods.cs_wake(console.Host, credential);
-        if (result != 0) throw new InvalidOperationException($"PS5 wake-up could not be sent ({result})");
+        var result = NativeMethods.cs_wake_ex(console.Host, credential, console.IsPs4 ? 1 : 0);
+        if (result != 0) throw new InvalidOperationException($"{(console.IsPs4 ? "PS4" : "PS5")} wake-up could not be sent ({result})");
     }
 
     private sealed class Collector
@@ -67,9 +67,9 @@ public static class ConsoleDiscovery
         try
         {
             for (var i = 0; i < targets.Count; i++) strings[i] = Marshal.StringToCoTaskMemUTF8(targets[i]);
-            delegate* unmanaged[Cdecl]<byte*, byte*, int, byte*, byte*, nint, void> callback = &OnConsole;
+            delegate* unmanaged[Cdecl]<byte*, byte*, int, byte*, byte*, int, nint, void> callback = &OnConsole;
             fixed (nint* pointer = strings)
-                NativeMethods.cs_discover_ex(pointer, strings.Length, (int)timeout.TotalMilliseconds, (nint)callback, GCHandle.ToIntPtr(handle));
+                NativeMethods.cs_discover_ex2(pointer, strings.Length, (int)timeout.TotalMilliseconds, (nint)callback, GCHandle.ToIntPtr(handle));
         }
         finally
         {
@@ -80,12 +80,13 @@ public static class ConsoleDiscovery
     }
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
-    private static unsafe void OnConsole(byte* host, byte* name, int awake, byte* titleId, byte* appName, nint user)
+    private static unsafe void OnConsole(byte* host, byte* name, int awake, byte* titleId, byte* appName, int ps4, nint user)
     {
         try
         {
             if (GCHandle.FromIntPtr(user).Target is not Collector collector || NativeMethods.Utf8(host) is not { } address) return;
-            var info = new ConsoleInfo(address, NativeMethods.Utf8(name) ?? "PS5", awake != 0, NativeMethods.Utf8(titleId), NativeMethods.Utf8(appName));
+            var info = new ConsoleInfo(address, NativeMethods.Utf8(name) ?? (ps4 != 0 ? "PS4" : "PS5"), awake != 0,
+                                       NativeMethods.Utf8(titleId), NativeMethods.Utf8(appName), ps4 != 0);
             lock (collector) collector.Hosts[info.Host] = info;
         }
         catch

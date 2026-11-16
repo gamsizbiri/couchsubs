@@ -8,12 +8,16 @@ namespace CouchSubs.RemotePlay;
 
 /// <param name="RunningAppTitleId">PS5'te o an çalışan uygulama (keşif yanıtındaki <c>running-app-titleid</c>); ana
 /// ekranda ya da dinlenme modunda null.</param>
-public sealed record ConsoleInfo(string Host, string Name, bool IsAwake, string? RunningAppTitleId = null, string? RunningAppName = null);
+/// <param name="IsPs4">Konsol PS4 mü (false: PS5). Arama yanıtının protokol sürümünden anlaşılır.</param>
+public sealed record ConsoleInfo(string Host, string Name, bool IsAwake, string? RunningAppTitleId = null, string? RunningAppName = null,
+                                 bool IsPs4 = false);
 
-/// <summary>PS5'e kaydedilmiş bu bilgisayarın bağlantı bilgileri. Şifreli olarak saklanır.</summary>
+/// <summary>PS4/PS5'e kaydedilmiş bu bilgisayarın bağlantı bilgileri. Şifreli olarak saklanır.</summary>
 /// <param name="RegistKey">16 baytlık kayıt anahtarı (ASCII onaltılık, sıfırla doldurulmuş).</param>
 /// <param name="Morning">16 baytlık oturum anahtarı.</param>
-public sealed record RegisteredConsole(string Host, string Name, byte[] RegistKey, byte[] Morning)
+/// <param name="IsPs4">PS4 mü (false: PS5). PS4 desteğinden önce saklanmış kayıtlarda alan yoktur; varsayılan false
+/// olduğu için onlar PS5 olarak okunur.</param>
+public sealed record RegisteredConsole(string Host, string Name, byte[] RegistKey, byte[] Morning, bool IsPs4 = false)
 {
     /// <summary>Uyandırma için kayıt anahtarının onaltılık değeri.</summary>
     public ulong? WakeCredential

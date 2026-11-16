@@ -40,8 +40,18 @@ typedef void (*cs_console_ex_cb)(const char *host, const char *name, int awake, 
 /* cs_discover ile aynı; yanıtlar cs_console_ex_cb ile bildirilir. */
 CS_API int cs_discover_ex(const char *const *targets, int target_count, int timeout_ms, cs_console_ex_cb callback, void *user);
 
+/* PS4 desteği: cs_console_ex_cb'ye ek olarak konsolun PS4 olup olmadığı (ps4: 1 PS4, 0 PS5) gelir. */
+typedef void (*cs_console_ex2_cb)(const char *host, const char *name, int awake, const char *running_app_titleid,
+		const char *running_app_name, int ps4, void *user);
+
+/* cs_discover_ex gibi, ama PS4'e de (UDP 987) sorar ve PS4 yanıtlarını da bildirir. */
+CS_API int cs_discover_ex2(const char *const *targets, int target_count, int timeout_ms, cs_console_ex2_cb callback, void *user);
+
 /* Kayıtlı PS5'i dinlenme modundan uyandırır. credential: kayıt anahtarının onaltılık değeri. */
 CS_API int cs_wake(const char *host, uint64_t credential);
+
+/* cs_wake'in PS4 destekli hali (ps4: 1 PS4, 0 PS5). */
+CS_API int cs_wake_ex(const char *host, uint64_t credential, int ps4);
 
 /* --- Kayıt (PS5'in "Cihazı Eşleştir" kodu) --- */
 
@@ -55,6 +65,10 @@ typedef struct {
  * (ör. 0x80108b02 = hesap tanınmadı); bilinmiyorsa 0. Dönüş: 0 başarı, 1 başarısız, 2 iptal, <0 başlatılamadı. */
 CS_API int cs_register(const char *host, const uint8_t account_id[8], uint32_t pin,
                        cs_registered_console *out, uint32_t *reason, cs_log_cb log, void *user);
+
+/* cs_register'ın PS4 destekli hali (ps4: 1 PS4 "Aygıt Ekle" kodu, 0 PS5 "Cihazı Bağla" kodu). */
+CS_API int cs_register_ex(const char *host, const uint8_t account_id[8], uint32_t pin, int ps4,
+                          cs_registered_console *out, uint32_t *reason, cs_log_cb log, void *user);
 
 /* --- Görüntü akışı --- */
 
@@ -84,6 +98,11 @@ typedef struct cs_session cs_session;
 CS_API cs_session *cs_session_start(const char *host, const uint8_t regist_key[0x10], const uint8_t morning[0x10],
                                     const uint8_t account_id[8], int max_fps,
                                     cs_frame_cb frame, cs_event_cb event, cs_log_cb log, void *user);
+
+/* cs_session_start'ın PS4 destekli hali. ps4 = 1 ise 720p/30 (standart PS4 1080p yayınlamaz). */
+CS_API cs_session *cs_session_start_ex(const char *host, const uint8_t regist_key[0x10], const uint8_t morning[0x10],
+                                       const uint8_t account_id[8], int max_fps, int ps4,
+                                       cs_frame_cb frame, cs_event_cb event, cs_log_cb log, void *user);
 
 /* PS5'in istediği giriş şifresini (ASCII rakamlar) gönderir. Olay geri çağrısı içinden çağrılmamalı (libchiaki olayı
  * kilit tutarken verir). Dönüş: 0 başarı. */

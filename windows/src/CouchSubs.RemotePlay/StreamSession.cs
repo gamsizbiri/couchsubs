@@ -309,7 +309,9 @@ public sealed class StreamSession : IStreamSession
     {
         if (DateTime.UtcNow < nextRelocate) return null;
         nextRelocate = DateTime.UtcNow + RelocateInterval;
-        var moved = ConsoleDiscovery.PickMoved(ConsoleDiscovery.Discover(null, TimeSpan.FromSeconds(3)), console.Name);
+        // Ağda hem PS4 hem PS5 varsa yalnız kayıtlı olanla aynı nesil değerlendirilir.
+        var sameKind = ConsoleDiscovery.Discover(null, TimeSpan.FromSeconds(3)).Where(c => c.IsPs4 == console.IsPs4).ToList();
+        var moved = ConsoleDiscovery.PickMoved(sameKind, console.Name);
         if (moved is null || moved.Host == console.Host) return null;
         RemotePlayLog.Write(1, $"PS5 yeni adreste: {console.Host} -> {moved.Host}");
         console = console.WithHost(moved.Host);
@@ -481,9 +483,10 @@ public sealed class StreamSession : IStreamSession
                 fixed (byte* key = registKey)
                 fixed (byte* morningPointer = morning)
                 fixed (byte* account = accountId)
-                    box.native = NativeMethods.cs_session_start(console.Host, key, morningPointer, account, MaxFps,
-                                                                (nint)frame, (nint)eventCallback, (nint)log,
-                                                                GCHandle.ToIntPtr(box.handle));
+                    box.native = NativeMethods.cs_session_start_ex(console.Host, key, morningPointer, account, MaxFps,
+                                                                   console.IsPs4 ? 1 : 0,
+                                                                   (nint)frame, (nint)eventCallback, (nint)log,
+                                                                   GCHandle.ToIntPtr(box.handle));
             }
             catch (Exception error)
             {

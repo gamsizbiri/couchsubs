@@ -123,17 +123,25 @@ CS_API int cs_init(void)
 typedef struct {
 	cs_console_cb cb;
 	cs_console_ex_cb ex_cb;
+	cs_console_ex2_cb ex2_cb;
+	/* PS4'e de (UDP 987) arama paketi gönderilir ve PS4 yanıtları bildirilir; yalnız cs_discover_ex2 açar. */
+	bool include_ps4;
 	void *user;
 } cs_discover_ctx;
 
 static void cs_discovery_cb(ChiakiDiscoveryHost *host, void *user)
 {
 	cs_discover_ctx *ctx = user;
-	if(!host || !host->host_addr || !chiaki_discovery_host_is_ps5(host))
+	if(!host || !host->host_addr)
 		return;
-	const char *name = host->host_name ? host->host_name : "PS5";
+	bool is_ps5 = chiaki_discovery_host_is_ps5(host);
+	if(!is_ps5 && !ctx->include_ps4)
+		return;
+	const char *name = host->host_name ? host->host_name : (is_ps5 ? "PS5" : "PS4");
 	int awake = host->state == CHIAKI_DISCOVERY_HOST_STATE_READY ? 1 : 0;
-	if(ctx->ex_cb)
+	if(ctx->ex2_cb)
+		ctx->ex2_cb(host->host_addr, name, awake, host->running_app_titleid, host->running_app_name, is_ps5 ? 0 : 1, ctx->user);
+	else if(ctx->ex_cb)
 		ctx->ex_cb(host->host_addr, name, awake, host->running_app_titleid, host->running_app_name, ctx->user);
 	else
 		ctx->cb(host->host_addr, name, awake, ctx->user);
@@ -145,7 +153,7 @@ CS_API int cs_discover(const char *const *targets, int target_count, int timeout
 {
 	if(!targets || target_count <= 0 || !callback)
 		return 1;
-	cs_discover_ctx ctx = { callback, NULL, user };
+	cs_discover_ctx ctx = { callback, NULL, NULL, false, user };
 	return cs_discover_run(targets, target_count, timeout_ms, ctx);
 }
 
@@ -153,7 +161,15 @@ CS_API int cs_discover_ex(const char *const *targets, int target_count, int time
 {
 	if(!targets || target_count <= 0 || !callback)
 		return 1;
-	cs_discover_ctx ctx = { NULL, callback, user };
+	cs_discover_ctx ctx = { NULL, callback, NULL, false, user };
+	return cs_discover_run(targets, target_count, timeout_ms, ctx);
+}
+
+CS_API int cs_discover_ex2(const char *const *targets, int target_count, int timeout_ms, cs_console_ex2_cb callback, void *user)
+{
+	if(!targets || target_count <= 0 || !callback)
+		return 1;
+	cs_discover_ctx ctx = { NULL, NULL, callback, true, user };
 	return cs_discover_run(targets, target_count, timeout_ms, ctx);
 }
 
@@ -207,12 +223,27 @@ static int cs_discover_run(const char *const *targets, int target_count, int tim
 	packet.cmd = CHIAKI_DISCOVERY_CMD_SRCH;
 	packet.protocol_version = version;
 
+	/* PS4 başka bir bağlantı noktasında (987) ve başka protokol sürümüyle dinler. */
+	char ps4_version[] = CHIAKI_DISCOVERY_PROTOCOL_VERSION_PS4;
+	ChiakiDiscoveryPacket ps4_packet;
+	memset(&ps4_packet, 0, sizeof(ps4_packet));
+	ps4_packet.cmd = CHIAKI_DISCOVERY_CMD_SRCH;
+	ps4_packet.protocol_version = ps4_version;
+
 	/* Yanıt kaçmasın diye arama süre dolana kadar tekrarlanır. */
 	uint64_t end = chiaki_time_now_monotonic_ms() + (uint64_t)(timeout_ms > 0 ? timeout_ms : 0);
 	do
 	{
 		for(int i = 0; i < address_count; i++)
+		{
 			chiaki_discovery_send(&discovery, &packet, (struct sockaddr *)&addresses[i], sizeof(struct sockaddr_in));
+			if(ctx.include_ps4)
+			{
+				struct sockaddr_in ps4_address = addresses[i];
+				ps4_address.sin_port = htons(CHIAKI_DISCOVERY_PORT_PS4);
+				chiaki_discovery_send(&discovery, &ps4_packet, (struct sockaddr *)&ps4_address, sizeof(struct sockaddr_in));
+			}
+		}
 		cs_sleep_ms(500);
 	} while(chiaki_time_now_monotonic_ms() < end);
 
@@ -223,14 +254,19 @@ static int cs_discover_run(const char *const *targets, int target_count, int tim
 	return result;
 }
 
-CS_API int cs_wake(const char *host, uint64_t credential)
+CS_API int cs_wake_ex(const char *host, uint64_t credential, int ps4)
 {
 	if(!host)
 		return 1;
 	ChiakiLog log;
 	chiaki_log_init(&log, CHIAKI_LOG_ERROR, cs_log_forward, NULL);
-	ChiakiErrorCode err = chiaki_discovery_wakeup(&log, NULL, host, credential, true);
+	ChiakiErrorCode err = chiaki_discovery_wakeup(&log, NULL, host, credential, !ps4);
 	return err == CHIAKI_ERR_SUCCESS ? 0 : (int)err;
+}
+
+CS_API int cs_wake(const char *host, uint64_t credential)
+{
+	return cs_wake_ex(host, credential, 0);
 }
 
 /* --- Kayıt --- */
@@ -302,7 +338,7 @@ static bool cs_regist_done(void *user)
 	return ((cs_regist_ctx *)user)->done;
 }
 
-CS_API int cs_register(const char *host, const uint8_t account_id[8], uint32_t pin,
+static int cs_register_impl(const char *host, const uint8_t account_id[8], uint32_t pin, bool ps4,
 		cs_registered_console *out, uint32_t *reason, cs_log_cb log, void *user)
 {
 	if(reason)
@@ -332,7 +368,8 @@ CS_API int cs_register(const char *host, const uint8_t account_id[8], uint32_t p
 
 	ChiakiRegistInfo info;
 	memset(&info, 0, sizeof(info));
-	info.target = CHIAKI_TARGET_PS5_1;
+	/* PS4: oturum açılırken libchiaki sunucunun gerçek sürümünü algılayıp hedefi kendisi düzeltir. */
+	info.target = ps4 ? CHIAKI_TARGET_PS4_10 : CHIAKI_TARGET_PS5_1;
 	info.host = host;
 	info.broadcast = false;
 	info.psn_online_id = NULL;
@@ -389,6 +426,18 @@ CS_API int cs_register(const char *host, const uint8_t account_id[8], uint32_t p
 	chiaki_mutex_fini(&ctx->mutex);
 	free(ctx);
 	return result;
+}
+
+CS_API int cs_register(const char *host, const uint8_t account_id[8], uint32_t pin,
+		cs_registered_console *out, uint32_t *reason, cs_log_cb log, void *user)
+{
+	return cs_register_impl(host, account_id, pin, false, out, reason, log, user);
+}
+
+CS_API int cs_register_ex(const char *host, const uint8_t account_id[8], uint32_t pin, int ps4,
+		cs_registered_console *out, uint32_t *reason, cs_log_cb log, void *user)
+{
+	return cs_register_impl(host, account_id, pin, ps4 != 0, out, reason, log, user);
 }
 
 /* --- Kare sınırlayıcı --- */
@@ -636,8 +685,8 @@ static void cs_session_cant_display(void *user, bool cant_display)
 	CHIAKI_LOGI(&session->log, "PS5 stream %s", cant_display ? "can't display (protected content)" : "can display again");
 }
 
-CS_API cs_session *cs_session_start(const char *host, const uint8_t regist_key[0x10], const uint8_t morning[0x10],
-		const uint8_t account_id[8], int max_fps,
+static cs_session *cs_session_start_impl(const char *host, const uint8_t regist_key[0x10], const uint8_t morning[0x10],
+		const uint8_t account_id[8], int max_fps, bool ps4,
 		cs_frame_cb frame, cs_event_cb event, cs_log_cb log, void *user)
 {
 	if(!host || !regist_key || !morning || !account_id)
@@ -664,11 +713,13 @@ CS_API cs_session *cs_session_start(const char *host, const uint8_t regist_key[0
 
 	ChiakiConnectInfo info;
 	memset(&info, 0, sizeof(info));
-	info.ps5 = true;
+	info.ps5 = !ps4;
 	info.host = host; /* libchiaki adresi oturum açılırken kopyalar */
 	memcpy(info.regist_key, regist_key, sizeof(info.regist_key));
 	memcpy(info.morning, morning, sizeof(info.morning));
-	chiaki_connect_video_profile_preset(&info.video_profile, CHIAKI_VIDEO_RESOLUTION_PRESET_1080p, CHIAKI_VIDEO_FPS_PRESET_30);
+	/* Standart PS4 en çok 720p yayınlar (1080p yalnız PS4 Pro'da var); PS5'te 1080p. */
+	chiaki_connect_video_profile_preset(&info.video_profile,
+			ps4 ? CHIAKI_VIDEO_RESOLUTION_PRESET_720p : CHIAKI_VIDEO_RESOLUTION_PRESET_1080p, CHIAKI_VIDEO_FPS_PRESET_30);
 	info.video_profile.codec = CHIAKI_CODEC_H264;
 	info.video_profile_auto_downgrade = true;
 	info.enable_keyboard = false;
@@ -705,6 +756,20 @@ CS_API cs_session *cs_session_start(const char *host, const uint8_t regist_key[0
 		return NULL;
 	}
 	return session;
+}
+
+CS_API cs_session *cs_session_start(const char *host, const uint8_t regist_key[0x10], const uint8_t morning[0x10],
+		const uint8_t account_id[8], int max_fps,
+		cs_frame_cb frame, cs_event_cb event, cs_log_cb log, void *user)
+{
+	return cs_session_start_impl(host, regist_key, morning, account_id, max_fps, false, frame, event, log, user);
+}
+
+CS_API cs_session *cs_session_start_ex(const char *host, const uint8_t regist_key[0x10], const uint8_t morning[0x10],
+		const uint8_t account_id[8], int max_fps, int ps4,
+		cs_frame_cb frame, cs_event_cb event, cs_log_cb log, void *user)
+{
+	return cs_session_start_impl(host, regist_key, morning, account_id, max_fps, ps4 != 0, frame, event, log, user);
 }
 
 CS_API int cs_session_set_login_pin(cs_session *session, const uint8_t *pin, size_t pin_size)

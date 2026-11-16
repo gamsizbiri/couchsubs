@@ -20,13 +20,15 @@ public static class Registration
     private const int SearchAttempts = 3;
     private const string ReasonPrefix = "Reported Application Reason: ";
 
-    /// <summary>PS5'in "Cihazı Bağla" ekranındaki 8 haneli kodla kayıt olur. Başarısızlıkta
+    /// <summary>PS5'in "Cihazı Bağla" (PS4'ün "Aygıt Ekle") ekranındaki 8 haneli kodla kayıt olur. <paramref name="isPs4"/>
+    /// verilmezse konsola arama paketi gönderilip yanıtından anlaşılır (yanıt gelmezse PS5 varsayılır). Başarısızlıkta
     /// <see cref="RegistrationException"/>; iptal beklemeyi bırakır (OperationCanceledException), PS5'le
     /// konuşma kendi zaman aşımında (en çok ~30 sn) biter.</summary>
-    public static Task<RegisteredConsole> RegisterAsync(string host, byte[] accountId, uint pin, CancellationToken ct = default)
+    public static Task<RegisteredConsole> RegisterAsync(string host, byte[] accountId, uint pin, CancellationToken ct = default,
+                                                        bool? isPs4 = null)
     {
         if (accountId.Length != 8) throw new ArgumentException("PSN account id must be 8 bytes", nameof(accountId));
-        return Task.Factory.StartNew(() => Register(host, accountId, pin), CancellationToken.None,
+        return Task.Factory.StartNew(() => Register(host, accountId, pin, isPs4), CancellationToken.None,
                                      TaskCreationOptions.LongRunning, TaskScheduler.Default).WaitAsync(ct);
     }
 
@@ -75,10 +77,12 @@ public static class Registration
         return errors.Count > 0 ? errors[0] : null;
     }
 
-    private static unsafe RegisteredConsole Register(string host, byte[] accountId, uint pin)
+    private static unsafe RegisteredConsole Register(string host, byte[] accountId, uint pin, bool? isPs4)
     {
         NativeMethods.EnsureInitialized();
-        RemotePlayLog.Note($"PS5 kaydı başlıyor: {host}, hesap kimliği {Convert.ToBase64String(accountId)}");
+        var ps4 = isPs4 ?? ConsoleDiscovery.Discover(host, TimeSpan.FromSeconds(2)).FirstOrDefault()?.IsPs4 ?? false;
+        var generation = ps4 ? "PS4" : "PS5";
+        RemotePlayLog.Note($"{generation} kaydı başlıyor: {host}, hesap kimliği {Convert.ToBase64String(accountId)}");
         for (var attempt = 1; ; attempt++)
         {
             var errors = new List<string>();
@@ -90,7 +94,7 @@ public static class Registration
             {
                 delegate* unmanaged[Cdecl]<int, byte*, nint, void> log = &OnLog;
                 fixed (byte* account = accountId)
-                    result = NativeMethods.cs_register(host, account, pin, &output, &reason, (nint)log, GCHandle.ToIntPtr(handle));
+                    result = NativeMethods.cs_register_ex(host, account, pin, ps4 ? 1 : 0, &output, &reason, (nint)log, GCHandle.ToIntPtr(handle));
             }
             finally
             {
@@ -101,8 +105,8 @@ public static class Registration
             {
                 var registered = new RegisteredConsole(host, NativeMethods.FixedString(output.Nickname, 0x20),
                                                        new ReadOnlySpan<byte>(output.RegistKey, 0x10).ToArray(),
-                                                       new ReadOnlySpan<byte>(output.Morning, 0x10).ToArray());
-                RemotePlayLog.Note($"PS5 kaydı tamam ({host}): {registered.Name}");
+                                                       new ReadOnlySpan<byte>(output.Morning, 0x10).ToArray(), ps4);
+                RemotePlayLog.Note($"{generation} kaydı tamam ({host}): {registered.Name}");
                 return registered;
             }
 
@@ -122,7 +126,7 @@ public static class Registration
                 2 => "no answer within 30 s",
                 _ => $"native error {result}",
             };
-            RemotePlayLog.Write(0, $"PS5 kaydı başarısız ({host}, deneme {attempt}): {failure} {detail}");
+            RemotePlayLog.Write(0, $"{generation} kaydı başarısız ({host}, deneme {attempt}): {failure} {detail}");
             if (failure != RegistrationFailure.NoAnswer || attempt >= SearchAttempts)
                 throw new RegistrationException(failure, reported, detail);
             Thread.Sleep(500);

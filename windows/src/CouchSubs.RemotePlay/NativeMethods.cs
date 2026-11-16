@@ -45,15 +45,41 @@ internal static unsafe partial class NativeMethods
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial int cs_discover_ex(nint* targets, int targetCount, int timeoutMs, nint callback, nint user);
 
+    /// <summary>PS4'e de sorar. <paramref name="callback"/>: void (*)(const char *host, const char *name, int awake,
+    /// const char *running_app_titleid, const char *running_app_name, int ps4, void *user)</summary>
+    [LibraryImport(Library)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int cs_discover_ex2(nint* targets, int targetCount, int timeoutMs, nint callback, nint user);
+
     [LibraryImport(Library, StringMarshalling = StringMarshalling.Utf8)]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial int cs_wake(string host, ulong credential);
+
+    /// <param name="ps4">1: PS4, 0: PS5.</param>
+    [LibraryImport(Library, StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int cs_wake_ex(string host, ulong credential, int ps4);
 
     /// <param name="log">void (*)(int level, const char *message, void *user)</param>
     [LibraryImport(Library, StringMarshalling = StringMarshalling.Utf8)]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial int cs_register(string host, byte* accountId, uint pin, RegisteredConsoleNative* output,
                                             uint* reason, nint log, nint user);
+
+    /// <param name="ps4">1: PS4 "Aygıt Ekle" kodu, 0: PS5 "Cihazı Bağla" kodu.</param>
+    /// <param name="log">void (*)(int level, const char *message, void *user)</param>
+    [LibraryImport(Library, StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int cs_register_ex(string host, byte* accountId, uint pin, int ps4, RegisteredConsoleNative* output,
+                                               uint* reason, nint log, nint user);
+
+    /// <param name="ps4">1: PS4 (720p/30), 0: PS5 (1080p/30).</param>
+    /// <param name="frame">void (*)(const uint8_t *bgra, int width, int height, int stride, void *user)</param>
+    /// <param name="eventCallback">void (*)(int event, int quit_reason, const char *reason_text, void *user)</param>
+    [LibraryImport(Library, StringMarshalling = StringMarshalling.Utf8)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial nint cs_session_start_ex(string host, byte* registKey, byte* morning, byte* accountId, int maxFps, int ps4,
+                                                     nint frame, nint eventCallback, nint log, nint user);
 
     /// <param name="frame">void (*)(const uint8_t *bgra, int width, int height, int stride, void *user)</param>
     /// <param name="eventCallback">void (*)(int event, int quit_reason, const char *reason_text, void *user)</param>
